@@ -1,11 +1,15 @@
 name: build-jre
 
-# 推 v* tag 自动跑全量构建并发布 release;
-# 也可在 Actions 页面手动触发(可只跑指定主版本)。
+# 推 v* tag 自动跑全量构建并发布正式 release;
+# 每天北京时间 00:00 定时全量构建,更新滚动 nightly release;
+# 也可在 Actions 页面手动触发(可只跑指定主版本,仅产出 artifact)。
 on:
   push:
     tags:
       - 'v*'
+  schedule:
+    # cron 走 UTC;16:00 UTC = 次日 00:00 北京时间
+    - cron: '0 16 * * *'
   workflow_dispatch:
     inputs:
       majors:
@@ -126,7 +130,8 @@ jobs:
   release:
     name: publish release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # tag push → 正式 release;定时任务 → 更新滚动 nightly release
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -151,11 +156,28 @@ jobs:
       - name: Generate manifest
         run: ./scripts/generate_manifest.sh
 
+      # 定时任务没有 tag,统一打到 rolling 的 nightly tag 上;
+      # 标 prerelease 避免 nightly 抢占 "Latest release" 位置。
+      - name: Resolve release tag
+        id: rel
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+            echo "tag=nightly"     >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "notes=false"     >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"       >> "$GITHUB_OUTPUT"
+            echo "notes=true"             >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          prerelease: ${{ steps.rel.outputs.prerelease }}
+          generate_release_notes: ${{ steps.rel.outputs.notes }}
           files: |
             build/out/*.tar.xz
             build/out/manifest.json
-          generate_release_notes: true
           fail_on_unmatched_files: true
