@@ -1,0 +1,161 @@
+name: build-jre
+
+# 推 v* tag 自动跑全量构建并发布 release;
+# 也可在 Actions 页面手动触发(可只跑指定主版本)。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      majors:
+        description: '逗号分隔的主版本号 (默认: 8,17,21,25)'
+        required: false
+        default: '8,17,21,25'
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: parse majors
+    runs-on: ubuntu-latest
+    outputs:
+      majors: ${{ steps.m.outputs.majors }}
+    steps:
+      - id: m
+        run: |
+          # tag push 时输入为空 → 用默认全量;手动触发可只跑某个版本
+          MAJORS="${{ github.event.inputs.majors || '8,17,21,25' }}"
+          # 逗号串 → JSON 数组字符串,喂给 build 的 fromJSON
+          JSON=$(echo "$MAJORS" | awk -F, \
+            '{for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}}')
+          echo "majors=[$JSON]" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: jre${{ matrix.major }}-aarch64
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        major: ${{ fromJSON(needs.prepare.outputs.majors) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup deps
+        run: |
+          sudo apt-get update -qq
+          # 通用依赖
+          sudo apt-get install -y --no-install-recommends \
+            binutils jq xz-utils ca-certificates curl libarchive-tools
+          # JRE8: unpack200 + boot JDK
+          sudo apt-get install -y --no-install-recommends \
+            openjdk-8-jre-headless openjdk-8-jdk
+          # 16KB page 对齐检测工具
+          sudo apt-get install -y --no-install-recommends llvm
+          # JRE8 源码交叉编译依赖
+          sudo apt-get install -y --no-install-recommends \
+            autoconf python3 python-is-python3 unzip zip \
+            systemtap-sdt-dev gcc-multilib g++-multilib \
+            libxtst-dev libasound2-dev libelf-dev \
+            libfontconfig1-dev libx11-dev libcups2-dev \
+            libxext-dev libxrender-dev libxt-dev
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      # ---- 17/21/25: Termux prebuilt deb -> normalize ----------------------
+      - name: Fetch Termux deb
+        if: matrix.major != '8'
+        env:
+          MAJOR: ${{ matrix.major }}
+          ARCH: aarch64
+        run: ./scripts/fetch_termux_jdk.sh
+
+      - name: Normalize JRE
+        if: matrix.major != '8'
+        env:
+          MAJOR: ${{ matrix.major }}
+          ARCH: aarch64
+          JAVA_HOME8: /usr/lib/jvm/java-8-openjdk-amd64
+        run: ./scripts/normalize_jre.sh
+
+      # ---- 8: 源码交叉编译 ------------------------------------------------
+      - name: Build JRE8 from source
+        if: matrix.major == '8'
+        env:
+          MAJOR: '8'
+          ARCH: aarch64
+          JAVA_HOME8: /usr/lib/jvm/java-8-openjdk-amd64
+        run: ./scripts/build_openjdk_source.sh
+
+      # ---- 通用: staging -> tar.xz -----------------------------------------
+      - name: Pack tar.xz
+        env:
+          MAJOR: ${{ matrix.major }}
+          ARCH: aarch64
+        run: ./scripts/pack_tar_xz.sh
+
+      - name: Check 16KB page alignment (warn-only)
+        run: |
+          SO=$(find build/staging/lib -name libjvm.so -print -quit)
+          if [ -n "$SO" ]; then
+            ALIGN=$(llvm-readelf -l "$SO" | awk '/LOAD/ {print $2; exit}')
+            echo "libjvm.so LOAD align = $ALIGN"
+            if [ "$((ALIGN))" -lt 16384 ]; then
+              echo "::warning::libjvm.so align < 16KB, may fail on Android 15+"
+            fi
+          fi
+
+      - name: Verify archive
+        run: |
+          OUT=build/out/jre${{ matrix.major }}-aarch64.tar.xz
+          xz -t "$OUT"
+          echo "size: $(stat -c%s "$OUT") bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jre${{ matrix.major }}-aarch64
+          path: |
+            build/out/jre${{ matrix.major }}-aarch64.tar.xz
+            build/deb-version.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: build/_artifacts
+          merge-multiple: true
+
+      - name: Layout out/
+        run: |
+          mkdir -p build/out
+          cp build/_artifacts/*.tar.xz build/out/
+          cp build/_artifacts/deb-version.txt build/deb-version.txt 2>/dev/null \
+            || echo unknown > build/deb-version.txt
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Generate manifest
+        run: ./scripts/generate_manifest.sh
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/out/*.tar.xz
+            build/out/manifest.json
+          generate_release_notes: true
+          fail_on_unmatched_files: true

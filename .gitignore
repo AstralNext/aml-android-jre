@@ -1,0 +1,16 @@
+# 本地构建产物
+build/
+*.deb
+
+# 临时
+*.tmp
+.DS_Store
+
+# CI 不应携带任何大文件
+*.tar.xz
+*.tar.gz
+*.zip
+
+# 编辑器
+.vscode/
+.idea/
