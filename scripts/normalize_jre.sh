@@ -103,8 +103,42 @@ if [[ "$MAJOR" == "8" ]]; then
   done
 fi
 
+# ---- 3b. 裁剪: 只保留运行游戏所需的 JRE 内容 ------------------------------
+# Termux 的 openjdk-XX 是完整 JDK(openjdk-17 安装后 ~213MB),原样打包会让
+# AML 的内置资产膨胀到 ~320MB。AML 只做 JNI_CreateJavaVM + 跑 Minecraft:
+#   bin/      开发工具(javac/jar/jshell/jlink/jmod/jdeps/jpackage/...) 用不到
+#   include/  C 头文件
+#   jmods/    jlink 用的模块包(Termux 若提供)
+#   lib/      工具用归档 src.zip / jrt-fs.jar / ct.sym(javac --release 用)
+# 注意别动 lib/jspawnhelper:HotSpot 的 ProcessBuilder 子进程要 exec 它。
+rm -rf "$STAGE/include" "$STAGE/jmods" 2>/dev/null || true
+if [[ -d "$STAGE/bin" ]]; then
+  find "$STAGE/bin" -maxdepth 1 -type f ! -name java ! -name keytool -delete 2>/dev/null || true
+fi
+find "$STAGE/lib" -maxdepth 1 \
+  \( -name 'src.zip' -o -name 'jrt-fs.jar' -o -name 'ct.sym' \) -delete 2>/dev/null || true
+
 # ---- 4. 修正 bin/ 下可执行文件的权限位 (Termux deb 偶发丢 x) -------------
 find "$STAGE/bin" -type f -exec chmod +x {} \; 2>/dev/null || true
+
+# ---- 4b. strip 动态库 ------------------------------------------------------
+# JRE8 走源码构建(build_openjdk_source.sh)时已经 strip;Termux deb 这条链路
+# 之前漏了,调试符号白占体积。--strip-unneeded 只去掉链接不需要的符号表,
+# 动态符号(JVM_* 这些 dlsym 目标)会保留。
+STRIP_BIN=""
+for candidate in llvm-strip strip aarch64-linux-gnu-strip; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    STRIP_BIN="$candidate"
+    break
+  fi
+done
+if [[ -n "$STRIP_BIN" ]]; then
+  echo ">> strip 动态库: $STRIP_BIN"
+  find "$STAGE" -type f \( -name '*.so' -o -name '*.so.*' \) \
+    -exec "$STRIP_BIN" --strip-unneeded {} + 2>/dev/null || true
+else
+  echo ">> !! 未找到 strip 工具,体积会偏大" >&2
+fi
 
 # ---- 5. 修 lib/java.properties 里的 java.home 路径 -----------------------
 # Termux 把 java.home 写死成 /data/data/com.termux/...,AML 用相对路径加载,
