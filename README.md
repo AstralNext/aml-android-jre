@@ -45,9 +45,34 @@ MAJOR=8 ARCH=aarch64 ./scripts/pack_tar_xz.sh
 ```
 脚本依次产出 `build/deb/`、`build/staging/`、`build/out/jre<major>-aarch64.tar.xz`。
 
-### 触发 release
-推一个 `vN` tag，GitHub Actions 跑全量构建，自动 publish release。
+### 触发构建
+
+构建全部由 [.github/workflows/build.yml](.github/workflows/build.yml) 驱动：
+
+| 触发方式 | 构建范围 | 产出 |
+| --- | --- | --- |
+| 推 `v*` tag | 全量（8/17/21/25） | 正式 release，tag 即版本号 |
+| 每天北京时间 00:00 | 全量（8/17/21/25） | 滚动更新 `nightly` release |
+| Actions 页面手动触发 | 可指定主版本 | 仅 artifact，保留 14 天 |
+
+定时任务由 `schedule: '0 16 * * *'`（UTC，= 北京时间次日 00:00）触发，只在默认分支生效。
+注意：仓库连续 60 天无提交活动时 GitHub 会自动停用定时任务，任意 push 可重置。
+
+`nightly` release 标为 prerelease，所以不会顶掉 `Latest release` 的位置。
 JRE8 走 Pack200 预解包（脚本内部处理）。
+
+### 下载
+
+```bash
+# 稳定版（推荐给最终用户）
+https://github.com/AstralNext/aml-android-jre/releases/latest/download/manifest.json
+
+# 每日构建（rolling，永远指向最近一次定时构建）
+https://github.com/AstralNext/aml-android-jre/releases/download/nightly/manifest.json
+```
+
+tar.xz 同理，把文件名换成 `jre<major>-aarch64.tar.xz` 即可，例如
+`.../releases/download/nightly/jre21-aarch64.tar.xz`。
 
 ## 许可
 
