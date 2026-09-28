@@ -118,12 +118,22 @@ jobs:
           xz -t "$OUT"
           echo "size: $(stat -c%s "$OUT") bytes"
 
+      # 只上传 build/out/ 一个目录:upload-artifact 会把该目录的“内容”放到
+      # artifact 根下,下载端 merge-multiple 归并后路径才是平的。之前把
+      # build/out/xxx.tar.xz 和 build/deb-version.txt 并列写,两者最小公共父
+      # 目录是 build/,artifact 里就多出一层 out/,release job 的
+      # `cp build/_artifacts/*.tar.xz` 因而找不到文件。
+      - name: Stage deb version
+        run: |
+          if [[ -f build/deb-version.txt ]]; then
+            # 按主版本改名,避免 4 个 artifact 归并时 deb-version.txt 互相覆盖
+            cp build/deb-version.txt "build/out/jre${{ matrix.major }}-deb-version.txt"
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: jre${{ matrix.major }}-aarch64
-          path: |
-            build/out/jre${{ matrix.major }}-aarch64.tar.xz
-            build/deb-version.txt
+          path: build/out/
           if-no-files-found: error
           retention-days: 14
 
@@ -146,9 +156,25 @@ jobs:
       - name: Layout out/
         run: |
           mkdir -p build/out
-          cp build/_artifacts/*.tar.xz build/out/
-          cp build/_artifacts/deb-version.txt build/deb-version.txt 2>/dev/null \
-            || echo unknown > build/deb-version.txt
+          # 递归找 tar.xz,不依赖 artifact 内部的目录层级
+          count=$(find build/_artifacts -type f -name '*.tar.xz' | wc -l)
+          [[ "$count" -gt 0 ]] || { echo "!! artifacts 里没有 tar.xz" >&2; exit 1; }
+          find build/_artifacts -type f -name '*.tar.xz' -exec cp -t build/out/ {} +
+          # 每个产物对应的 Termux deb 版本(由 build job 按主版本留存)
+          find build/_artifacts -type f -name '*-deb-version.txt' \
+            -exec cp -t build/out/ {} +
+          # 顶层 termux_version 只是个代表值(8 是源码构建,17/21/25 才是 Termux
+          # deb,版本可能互不相同;以 manifest 里 files[].termux_version 为准)。
+          if [[ -f build/_artifacts/deb-version.txt ]]; then
+            cp build/_artifacts/deb-version.txt build/deb-version.txt
+          else
+            rep=$(find build/_artifacts -type f -name '*-deb-version.txt' | sort | head -1)
+            if [[ -n "$rep" ]]; then
+              cp "$rep" build/deb-version.txt
+            else
+              echo unknown > build/deb-version.txt
+            fi
+          fi
 
       - name: Make scripts executable
         run: chmod +x scripts/*.sh
