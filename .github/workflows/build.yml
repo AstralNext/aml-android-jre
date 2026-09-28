@@ -105,9 +105,10 @@ jobs:
         run: |
           SO=$(find build/staging/lib -name libjvm.so -print -quit)
           if [ -n "$SO" ]; then
-            ALIGN=$(llvm-readelf -l "$SO" | awk '/LOAD/ {print $2; exit}')
-            echo "libjvm.so LOAD align = $ALIGN"
-            if [ "$((ALIGN))" -lt 16384 ]; then
+            # Align 是 readelf -l 的最后一段($2 是 Offset,取错列会恒为 0 并误报)
+            ALIGN=$(llvm-readelf -l "$SO" | awk '$1=="LOAD" {print $NF; exit}')
+            echo "libjvm.so LOAD align = $ALIGN (16KB=0x4000)"
+            if [[ -n "$ALIGN" ]] && (( ALIGN < 16384 )); then
               echo "::warning::libjvm.so align < 16KB, may fail on Android 15+"
             fi
           fi
