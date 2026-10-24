@@ -37,13 +37,33 @@ jre25-aarch64.tar.xz      # Minecraft 26.1+
 # 17/21/25: Termux deb
 MAJOR=21 ARCH=aarch64 ./scripts/fetch_termux_jdk.sh
 MAJOR=21 ARCH=aarch64 ./scripts/normalize_jre.sh
+MAJOR=21 ARCH=aarch64 ./scripts/fetch_termux_deps.sh   # 注入 Termux 运行库
 MAJOR=21 ARCH=aarch64 ./scripts/pack_tar_xz.sh
 
 # 8: 源码交叉编译
 MAJOR=8 ARCH=aarch64 ./scripts/build_openjdk_source.sh
+MAJOR=8 ARCH=aarch64 ./scripts/fetch_termux_deps.sh    # 只会跳过 App 侧依赖
 MAJOR=8 ARCH=aarch64 ./scripts/pack_tar_xz.sh
 ```
 脚本依次产出 `build/deb/`、`build/staging/`、`build/out/jre<major>-aarch64.tar.xz`。
+
+### Termux 运行库依赖（17/21/25 必需）
+
+Termux 的 JDK 动态链接的是 Termux prefix 下的运行库，这些库**不在 JVM 目录里**，
+直接打包会缺 `DT_NEEDED`：
+
+| JRE 里的库 | 需要的 soname | 来源包 |
+| --- | --- | --- |
+| `libjli.so` / `libzip.so` | `libz.so.1`（带 `ZLIB_1.2.x` 版本符号，Android 系统的 `libz.so` 不能替代） | `zlib` |
+| `libjava.so` / `libjvm.so` | `libandroid-spawn.so` / `libandroid-shmem.so` | `libandroid-spawn` / `libandroid-shmem` |
+| `libjsound.so` / `libjavajpeg.so` / `liblcms.so` | `libasound.so` / `libjpeg.so.8` / `liblcms2.so` | `alsa-lib` / `libjpeg-turbo` / `littlecms` |
+| `libinstrument.so` / `libjdwp.so` | `libiconv.so` | `libiconv` |
+
+[scripts/fetch_termux_deps.sh](scripts/fetch_termux_deps.sh) 会扫描 `build/staging/`
+里所有 ELF 的 `DT_NEEDED`，把缺失的库从 Termux APT 仓库拉下来放进 `staging/lib`，
+并保证其 `SONAME` 与依赖名一致（Termux 的 `libandroid-*` 编译时没写 SONAME，
+必须用 `patchelf --set-soname` 补上，否则别的库按名字命中不到）。
+`libfreetype.so` 由 AML App 侧的渲染桥提供，脚本会跳过。
 
 ### 触发构建
 

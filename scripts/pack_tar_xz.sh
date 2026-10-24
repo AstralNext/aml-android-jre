@@ -45,6 +45,16 @@ if [[ "$MAJOR" == "8" ]]; then
   [[ -f "$STAGE/lib/rt.jar" ]] || { echo "!! JRE8 缺 lib/rt.jar" >&2; exit 1; }
 else
   [[ -f "$STAGE/lib/modules" ]] || { echo "!! JRE$MAJOR 缺 lib/modules" >&2; exit 1; }
+  # Termux 依赖必须已经注入(fetch_termux_deps.sh):缺 libz.so.1 时
+  # libjli.so / libzip.so 在 dlopen 阶段直接失败,AML 的 jre.rs 也会判为无效。
+  [[ -f "$STAGE/lib/libz.so.1" ]] || {
+    echo "!! JRE$MAJOR 缺 lib/libz.so.1:先跑 scripts/fetch_termux_deps.sh" >&2
+    exit 1
+  }
+  [[ -f "$STAGE/lib/libandroid-spawn.so" ]] || {
+    echo "!! JRE$MAJOR 缺 lib/libandroid-spawn.so:先跑 scripts/fetch_termux_deps.sh" >&2
+    exit 1
+  }
 fi
 
 OUT_FILE="$OUT/jre${MAJOR}-${ARCH}.tar.xz"

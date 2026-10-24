@@ -52,7 +52,7 @@ jobs:
           sudo apt-get update -qq
           # 通用依赖
           sudo apt-get install -y --no-install-recommends \
-            binutils jq xz-utils ca-certificates curl libarchive-tools
+            binutils jq xz-utils ca-certificates curl libarchive-tools patchelf
           # JRE8: unpack200 + boot JDK
           sudo apt-get install -y --no-install-recommends \
             openjdk-8-jre-headless openjdk-8-jdk
@@ -93,6 +93,16 @@ jobs:
           ARCH: aarch64
           JAVA_HOME8: /usr/lib/jvm/java-8-openjdk-amd64
         run: ./scripts/build_openjdk_source.sh
+
+      # ---- 通用: 注入 Termux 运行库依赖 ------------------------------------
+      # 17/21/25 的 .so 依赖 Termux prefix 下的 ld.so 库（libz.so.1 /
+      # libandroid-spawn.so / libasound.so …），不在 JVM 目录里，必须补进
+      # staging/lib；8 走源码构建，只差 App 侧提供的 freetype，会被跳过。
+      - name: Inject Termux runtime deps
+        env:
+          MAJOR: ${{ matrix.major }}
+          ARCH: aarch64
+        run: ./scripts/fetch_termux_deps.sh
 
       # ---- 通用: staging -> tar.xz -----------------------------------------
       - name: Pack tar.xz
