@@ -113,7 +113,9 @@ fetch_index() {
 
 # 解出 deb 的数据到 $DEPTREE/$pkg/files（保留 Termux 原始路径）
 extract_deb() {
-  local pkg="$1" deb="$2" dir="$DEPTREE/$pkg"
+  local pkg="$1"
+  local deb="$2"
+  local dir="$DEPTREE/$pkg"
   mkdir -p "$dir/files"
   local data=""
   if command -v ar >/dev/null 2>&1; then
@@ -137,7 +139,8 @@ extract_deb() {
 }
 
 fetch_package() {
-  local pkg="$1" dir="$DEPTREE/$pkg"
+  local pkg="$1"
+  local dir="$DEPTREE/$pkg"
   [[ -f "$dir/.extracted" ]] && return 0
   fetch_index
   local fn ver deb
@@ -173,7 +176,9 @@ fetch_package() {
 
 # 把一个 soname 注入 staging/lib
 inject() {
-  local soname="$1" pkg="${PACKAGE[$soname]:-}"
+  # 注意：不要写成 local a="$1" b="${...[$a]}"——bash 会先展开所有右值再赋值。
+  local soname="$1"
+  local pkg="${PACKAGE[$soname]:-}"
   if [[ -z "$pkg" ]]; then
     echo "!! 缺少 soname「$soname」的 Termux 包映射（见本脚本 PACKAGE 表）" >&2
     exit 1
